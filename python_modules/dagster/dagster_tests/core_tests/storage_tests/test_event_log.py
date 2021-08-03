@@ -1,7 +1,6 @@
 import os
 import sys
 import tempfile
-import time
 import traceback
 
 import pytest
@@ -33,7 +32,9 @@ class TestSqliteEventLogStorage(TestEventLogStorage):
 
     @pytest.fixture(scope="function", name="storage")
     def event_log_storage(self):  # pylint: disable=arguments-differ
-        with tempfile.TemporaryDirectory() as tmpdir_path:
+        # make the temp dir in the cwd since default temp roots
+        # have issues with FS notif based event log watching
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as tmpdir_path:
             yield SqliteEventLogStorage(tmpdir_path)
 
     def test_filesystem_event_log_storage_run_corrupted(self, storage):
@@ -105,5 +106,7 @@ class TestConsolidatedSqliteEventLogStorage(TestEventLogStorage):
 
     @pytest.fixture(scope="function", name="storage")
     def event_log_storage(self):  # pylint: disable=arguments-differ
-        with tempfile.TemporaryDirectory() as tmpdir_path:
+        # make the temp dir in the cwd since default temp roots
+        # have issues with FS notif based event log watching
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as tmpdir_path:
             yield ConsolidatedSqliteEventLogStorage(tmpdir_path)
