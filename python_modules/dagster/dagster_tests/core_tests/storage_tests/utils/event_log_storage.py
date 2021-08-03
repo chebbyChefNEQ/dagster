@@ -1162,3 +1162,86 @@ class TestEventLogStorage:
                 DagsterEventType.PIPELINE_SUCCESS,
             ]
             assert [r.event_log_entry.run_id for r in filtered_records] == ["2", "3"]
+
+    def test_watch_exc_recovery(self, storage):
+        # test that an exception in one watch doesn't fail out others
+
+        @solid
+        def return_one(_):
+            return 1
+
+        def _solids():
+            return_one()
+
+        err_run_id = make_new_run_id()
+        safe_run_id = make_new_run_id()
+
+        class CBException(Exception):
+            pass
+
+        def _throw(_):
+            raise CBException("problem in watch callback")
+
+        err_events, _ = _synthesize_events(_solids, run_id=err_run_id)
+        safe_events, _ = _synthesize_events(_solids, run_id=safe_run_id)
+
+        event_list = []
+
+        storage.watch(err_run_id, -1, _throw)
+        storage.watch(safe_run_id, -1, event_list.append)
+
+        for event in err_events:
+            storage.store_event(event)
+
+        storage.end_watch(err_run_id, _throw)
+
+        for event in safe_events:
+            storage.store_event(event)
+
+        start = time.time()
+        while len(event_list) < len(safe_events) and time.time() - start < TEST_TIMEOUT:
+            time.sleep(0.01)
+
+        assert len(event_list) == len(safe_events)
+        assert all([isinstance(event, EventLogEntry) for event in event_list])
+
+    def test_watch_unwatch(self, storage):
+        # test for dead lock bug
+
+        @solid
+        def return_one(_):
+            return 1
+
+        def _solids():
+            return_one()
+
+        err_run_id = make_new_run_id()
+        safe_run_id = make_new_run_id()
+
+        def _unsub(_):
+            storage.end_watch(err_run_id, _unsub)
+
+        err_events, _ = _synthesize_events(_solids, run_id=err_run_id)
+        safe_events, _ = _synthesize_events(_solids, run_id=safe_run_id)
+
+        event_list = []
+
+        # Direct end_watch emulates behavior of clean up on exception downstream
+        # of the subscription in the dagit webserver.
+        storage.watch(err_run_id, -1, _unsub)
+
+        # Other active watches should proceed correctly.
+        storage.watch(safe_run_id, -1, event_list.append)
+
+        for event in err_events:
+            storage.store_event(event)
+
+        for event in safe_events:
+            storage.store_event(event)
+
+        start = time.time()
+        while len(event_list) < len(safe_events) and time.time() - start < TEST_TIMEOUT:
+            time.sleep(0.01)
+
+        assert len(event_list) == len(safe_events)
+        assert all([isinstance(event, EventLogEntry) for event in event_list])
